@@ -1,0 +1,46 @@
+{
+ "version": 2,
+ "active": "",
+ "accounts": {
+  "STUDENT_NUM_1": {
+   "uid": 0,
+   "school_id": 837,
+   "student_num": "STUDENT_NUM_1",
+   "card_id": "STUDENT_NUM_1",
+   "name": "成员一",
+   "alias": "成员一",
+   "enabled": true,
+   "remark": "示例成员(占位)。请用 `cli.py account add <名字> <学号>` 登记真实成员; uid 在首次抓号后自动回填",
+   "policy": {},
+   "auth": {
+    "token": "",
+    "issued_at": "",
+    "source": "",
+    "consumed_at": "",
+    "refresh_token": "",
+    "refresh_expire": 0,
+    "ttl_class": "single-active-session",
+    "probe_evidence": []
+   }
+  }
+ },
+ "environment": {
+  "api_host": "api2.lptiyu.com",
+  "api_proxy": "127.0.0.1:8081",
+  "h5_base": "/bdlp_h5_fitness_test/public/index.php",
+  "oss_host": "lptiyu-data.oss-cn-hangzhou.aliyuncs.com",
+  "app_key": "wxb2043232183dac7f"
+ },
+ "policy": {
+  "max_per_day": 1,
+  "style": "template",
+  "dist_lo": 2.03,
+  "dist_hi": 2.35,
+  "pace_lo": 185,
+  "pace_hi": 560
+ },
+ "runtime": {
+  "spacing_min": 5,
+  "spacing_max": 10
+ }
+}

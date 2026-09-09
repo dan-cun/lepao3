@@ -1,0 +1,15 @@
+{
+  "project": "lepao-research",
+  "display_name": "乐跑协议研究（Lepao Research）",
+  "name": "乐跑打卡助手",
+  "author": "dan-cun",
+  "repo_url": "https://github.com/dan-cun/lepao3",
+  "contact_qq": "1224145544",
+  "license_name": "乐跑研究协议 1.0",
+  "license_id": "LRL-1.0",
+  "license_short": "仅供学习 / 不可牟利 / 再发布须署名引用 / 保留并不得删除声明",
+  "copyright_year": "2026",
+  "version": "1.0.0",
+  "notice_marker": "# --- lepao-research-notice v1 (do not remove; see LICENSE) ---",
+  "comment": "发布元数据单一来源。改 repo_url 后：py -3 tools/apply_headers.py --url <新地址> --stamp && py -3 tools/verify_release.py --fix-url。改版本号后跑 --stamp 更新构建戳。"
+}

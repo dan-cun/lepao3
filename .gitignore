@@ -1,0 +1,45 @@
+__pycache__/
+*.pyc
+
+# ---- 真实凭证/运行状态：永不入库（LRL-1.0 第六条：数据仅存本地；第七条：发行面零个人信息） ----
+state.json
+state/
+dryrun_最新.json
+config.json
+proxy_backup.json
+凭证.json
+mitm_流量.log
+flows/
+flows_*/
+*.mitm
+logs/
+runtime/
+runner.json
+selfcheck.json
+_t_*.txt
+_submit_*.txt
+
+# 桌面助手(ui) 构建/运行产物
+ui/runtime/
+ui/build/
+ui/bundle/
+ui/dist/
+ui/*.spec
+ui/selfcheck.json
+ui/运行日志.log
+
+# 真实轨迹数据（含真实个人轨迹，永不入库）；唯一例外=净化模板（纯坐标，无身份字段）
+data/*
+!data/真实轨迹_035明文.json
+
+# 打包产物
+*.exe
+*.spec
+
+# 发布期产物（构建清单不入库）
+release.manifest.json
+# 注意：lepao/_buildstamp.py 刻意入库 —— 它是 LRL-1.0 第十一条的构建标识，
+# 也是比对"去声明副本"的证据；删除它本身即构成违反 LRL-1.0 第三条。
+
+# run_core 操作员模式会在数据目录生成 addon 副本（真源=工具/mitm_lptiyu_token.py）
+/mitm_addon.py
