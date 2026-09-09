@@ -545,9 +545,47 @@ def capability() -> dict:
         "clash": up_alive,
         "upstream": up, "upstream_mode": ("proxy" if up else "direct"),
         "wechat": _resolve_wechat() or None,
+        "cert": _cert_status_cached(),
         "members": members, "has_active": has_active,
         "frozen": FROZEN, "version": RUNNER_VER,
     }
+
+
+_CERT_CACHE = {"t": 0.0, "v": None}
+
+
+def _cert_status_cached(ttl=60):
+    """mitm 根证书受信状态（异机部署核心卡点）; 结果缓存 ttl 秒, 失败不崩。"""
+    now = time.time()
+    if _CERT_CACHE["v"] is not None and now - _CERT_CACHE["t"] < ttl:
+        return _CERT_CACHE["v"]
+    try:
+        from lepao import certctl
+        st = certctl.status()
+        v = {"trusted": st["trusted"], "present": st["ca_present"],
+             "fingerprint": st["fingerprint"][:12], "hint": st["hint"]}
+    except Exception as e:
+        v = {"trusted": False, "present": False, "fingerprint": "",
+             "hint": "证书自检异常: {}".format(e)}
+    _CERT_CACHE["t"], _CERT_CACHE["v"] = now, v
+    return v
+
+
+def _cert_preflight(log):
+    """起链前证书预警：未受信时 mitm 能起但小程序拒绝其签发证书 → 必然抓不到号。
+    这里给出可执行修复命令（不阻断：少数环境用 ignore_hosts 或已按其它方式信任）。"""
+    c = _cert_status_cached()
+    if c["trusted"]:
+        log("info", "mitm 根证书已受信(指纹 {}…) → HTTPS 解密抓取就绪".format(c["fingerprint"]))
+        return True
+    log("warn", "!" * 60)
+    log("warn", "mitm 根证书未受信 → 微信将拒绝 mitm 签发的证书, 表现=永远抓不到登录流量!")
+    log("warn", "  一键修复: powershell -ExecutionPolicy Bypass -File 一键配置.ps1")
+    log("warn", "  或命令行: py -3 cli.py cert --install   (当前用户库, 免管理员)")
+    log("warn", "  或手动:   双击 %USERPROFILE%\\.mitmproxy\\mitmproxy-ca-cert.cer")
+    log("warn", "            → 安装证书 → 当前用户 → 受信任的根证书颁发机构")
+    log("warn", "!" * 60)
+    return False
 
 
 # ================================================================ 微信唤起
@@ -819,6 +857,7 @@ def action_full(member=None, log=print, stop_event=None):
         log("info", "出口自动识别: 本机无系统代理 → mitm 直连模式(登录与打卡同出口, 同态成立)")
     else:
         log("info", f"出口自动识别: 沿用本机系统代理 {cap['upstream']}(与微信登录出口一致)")
+    _cert_preflight(log)
     reg, auth = _auth_for(member)
     log("ok", f"目标成员: {auth.label} (uid={auth.uid or '待抓号回填'})")
     base = _read_cred().get("token", "")
@@ -864,6 +903,7 @@ def action_capture(member=None, log=print, stop_event=None):
         log("err", ("mitmweb 不健康(启动即崩): " + (cap["mitmweb"] or ""))
             if cap["mitmweb"] else "缺少 mitmweb 依赖")
         return "缺依赖"
+    _cert_preflight(log)
     reg, auth = _auth_for(member)
     log("ok", f"抓号目标: {auth.label} (学号 {auth.student_num})")
     base = _read_cred().get("token", "")

@@ -171,17 +171,31 @@ def _config_skeleton_ok(cfg: Path) -> tuple:
     return True, ""
 
 
-def check_forbidden(files: list) -> list:
-    errs = []
+def check_forbidden(files: list) -> tuple:
+    errs, warns = [], []
+    tracked = set()
+    try:
+        import subprocess
+        out = subprocess.run(["git", "ls-files"], cwd=ROOT,
+                             capture_output=True, text=True,
+                             encoding="utf-8", errors="replace").stdout
+        tracked = {l.strip() for l in out.splitlines()}
+    except Exception:
+        pass
     for p in files:
+        rel = str(p.relative_to(ROOT)).replace("\\", "/")
         if p.name in FORBIDDEN_IN_RELEASE:
-            errs.append("发行树含禁入文件：{}（含真实凭证/状态，永不入库）".format(p.relative_to(ROOT)))
+            if rel in tracked:
+                errs.append("发行树含禁入文件：{}（含真实凭证/状态，永不入库）".format(rel))
+            else:
+                warns.append("工作树含运行态文件：{}（gitignored 不入库；"
+                             "zip 分发按 git 清单打包即可，勿手动附带）".format(rel))
     cfg = ROOT / "config.json"
     if cfg.exists():
         ok, why = _config_skeleton_ok(cfg)
         if not ok:
             errs.append("config.json 非空骨架，不得入库/入包：" + why)
-    return errs
+    return errs, warns
 
 
 def check_zip(path: Path) -> tuple:
@@ -340,8 +354,8 @@ def main(argv=None) -> int:
     else:
         e, w = check_notices(meta)
         e2, w2 = check_pii(tree_files())
-        e3 = check_forbidden(tree_files())
-        e, w = e + e2 + e3, w + w2
+        e3, w3 = check_forbidden(tree_files())
+        e, w = e + e2 + e3, w + w2 + w3
     errors += e
     warns += w
 

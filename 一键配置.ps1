@@ -32,7 +32,7 @@ Say "许可" "乐跑打卡助手 · Copyright (c) 2026 dan-cun · 乐跑研究�
 Say "许可" "仅供学习 · 不可牟利 · 再发布须署名引用 https://github.com/dan-cun/lepao3 且声明不得删除"
 
 # ---------------- 1) Python(命令行模式必需; EXE 模式仅用于装 mitmproxy) ----------------
-Say "1/7" "检查 Python ..."
+Say "1/8" "检查 Python ..."
 $pyOk = $false
 try { $v = py -3 --version 2>&1 | Out-String; if ($v -match "3\.(1[0-9]|[2-9][0-9])") { $pyOk = $true; Say "OK" ("Python " + $v.Trim()) } } catch { }
 if (-not $pyOk) {
@@ -45,7 +45,7 @@ if (-not $pyOk) {
 }
 
 # ---------------- 2) mitmweb(核心依赖: 抓流量必需) ----------------
-Say "2/7" "定位/安装 mitmweb(流量抓取核心) ..."
+Say "2/8" "定位/安装 mitmweb(流量抓取核心) ..."
 $candidates = @()
 if ($env:LEPAO_MITM_EXE) { $candidates += $env:LEPAO_MITM_EXE }
 $candidates += (Join-Path $ScriptDir "tools\mitmweb.exe")   # 目录内自带(可选)
@@ -86,21 +86,54 @@ if ($RegisterPath -and $mitm) {
 }
 
 # ---------------- 3) 依赖包(命令行模式: 加解密/br 解码) ----------------
-Say "3/7" "Python 依赖(pycryptodome / brotli) ..."
+Say "3/8" "Python 依赖(pycryptodome / brotli) ..."
 if ($pyOk) {
     py -3 -m pip install pycryptodome brotli | Out-Null
     Say "OK" "pycryptodome + brotli 就绪"
 } else { Say "跳过" "无 Python(EXE 模式自带依赖)" }
 
-# ---------------- 4) Clash 出口(可选: 不在线自动直连模式) ----------------
-Say "4/7" "检查 Clash 出口(127.0.0.1:7897) ..."
+# ---------------- 4) mitmproxy 根证书(HTTPS 抓取前置; 异地新机必装) ----------------
+Say "4/8" "检查/安装 mitmproxy 根证书(不装则小程序拒绝 mitm 签发的证书, 永远抓不到登录流量) ..."
+$caPath = Join-Path $env:USERPROFILE ".mitmproxy\mitmproxy-ca-cert.cer"
+function Get-CaThumbprint($path) {
+    try { (New-Object Security.Cryptography.X509Certificates.X509Certificate2 $path).Thumbprint } catch { $null }
+}
+function Test-CaTrusted($tp) {
+    if (-not $tp) { return $false }
+    try { return [bool](Get-ChildItem Cert:\CurrentUser\Root -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $tp }) } catch { return $false }
+}
+$caTp = $null
+if (Test-Path $caPath) { $caTp = Get-CaThumbprint $caPath }
+if (-not $caTp -and $mitm) {
+    # CA 文件只在 mitmweb 首次启动时生成 → 临时起 6 秒让它落盘
+    Say "生成" "未找到 ~/.mitmproxy CA(首次), 临时启动 mitmweb 让其生成 ..."
+    $gp = Start-Process -FilePath $mitm -ArgumentList @("-p","8082","--web-port","8092","--listen-host","127.0.0.1","--set","block_global=false") -PassThru -WindowStyle Hidden
+    Start-Sleep -Seconds 8
+    Stop-Process -Id $gp.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    if (Test-Path $caPath) { $caTp = Get-CaThumbprint $caPath }
+}
+if (-not $caTp) {
+    Say "缺失" "未能生成 mitmproxy CA(步骤2 的 mitmweb 起不来?) → 先修 mitmweb 再重跑本脚本"
+} elseif (Test-CaTrusted $caTp) {
+    Say "OK" ("mitm CA 已受信(当前用户根库): " + $caTp.Substring(0,12) + "...")
+} else {
+    Say "安装" "装入当前用户受信任根证书(免管理员) ..."
+    # 首选 Import-Certificate(静默, 不弹框); 失败再退回 certutil(可能弹一次安全确认框)
+    try { $null = Import-Certificate -FilePath $caPath -CertStoreLocation Cert:\CurrentUser\Root -ErrorAction Stop } catch { $null = certutil -user -addstore Root $caPath 2>&1 }
+    if (Test-CaTrusted $caTp) { Say "OK" ("mitm CA 安装成功: " + $caTp.Substring(0,12) + "...") }
+    else { Say "失败" "mitm CA 仍不受信 → 抓不到号! 手动修复: 双击 " + $caPath + " → 安装证书 → 当前用户 → 受信任的根证书颁发机构" }
+}
+
+# ---------------- 5) Clash 出口(可选: 不在线自动直连模式) ----------------
+Say "5/8" "检查 Clash 出口(127.0.0.1:7897) ..."
 $clashUp = $false
 try { $c = New-Object Net.Sockets.TcpClient; $c.Connect("127.0.0.1", 7897); $clashUp = $true; $c.Close() } catch { }
 if ($clashUp) { Say "OK" "Clash 在听 → 走 系统代理→mitm→Clash 同态链" }
 else { Say "提示" "Clash 未监听 → 程序自动【直连模式】(登录与业务同走本机 mitm 出口; 若小程序当时经代理则需开 Clash 保持一致)" }
 
-# ---------------- 5) 微信(打卡操作必需) ----------------
-Say "5/7" "检查电脑版微信 ..."
+# ---------------- 6) 微信(打卡操作必需) ----------------
+Say "6/8" "检查电脑版微信 ..."
 $wx = ""
 # 层1: 常见安装目录
 foreach ($p in @("$env:ProgramFiles\Tencent\Weixin\Weixin.exe", "${env:ProgramFiles(x86)}\Tencent\Weixin\Weixin.exe", "$env:LOCALAPPDATA\Tencent\Weixin\Weixin.exe", "${env:ProgramFiles(x86)}\Tencent\WeChat\WeChat.exe", "$env:ProgramFiles\Tencent\WeChat\WeChat.exe")) {
@@ -157,8 +190,8 @@ else {
     }
 }
 
-# ---------------- 6) 运行配置检查 ----------------
-Say "6/7" "检查运行配置 config.json ..."
+# ---------------- 7) 运行配置检查 ----------------
+Say "7/8" "检查运行配置 config.json ..."
 $cfg = Join-Path $ScriptDir "config.json"
 if (Test-Path $cfg) {
     try {
@@ -175,11 +208,12 @@ if (Test-Path $cfg) {
     }
 }
 
-# ---------------- 7) 汇总 ----------------
-Say "7/7" "====== 配置汇总 ======"
+# ---------------- 8) 汇总 ----------------
+Say "8/8" "====== 配置汇总 ======"
 $rows = @(
     "Python3        : " + $(if ($pyOk) { "OK" } else { "无需(EXE模式)/缺失" }),
     "mitmweb        : " + $(if ($mitm) { "OK -> $mitm" } else { "不可用(必须先装)" }),
+    "mitm CA 证书   : " + $(if ($caTp) { if (Test-CaTrusted $caTp) { "已受信 -> " + $caTp.Substring(0,12) + "..." } else { "未受信(抓不到号!见上一步修复提示)" } } else { "缺失(未生成)" }),
     "Clash(7897)    : " + $(if ($clashUp) { "OK" } else { "未开(直连模式可用)" }),
     "微信           : " + $(if ($wx) { "OK -> $wx" } else { "缺失(必须装)" })
 )
@@ -187,4 +221,7 @@ $rows | ForEach-Object { Say "状态" $_ }
 Write-Host ""
 Say "完成" "自检: 双击 乐跑打卡助手.exe(右上'环境自检'); 或 .\乐跑打卡助手.exe --selfcheck"
 Say "完成" "每日打卡: 启动程序 → (先退出微信登录) → 扫码 → 打开小程序「数体智慧体育」一次"
-if (-not $mitm) { exit 1 } else { exit 0 }
+$caOk = [bool]$caTp -and (Test-CaTrusted $caTp)
+if (-not $mitm) { exit 1 }
+if (-not $caOk) { Say "警告" "根证书未受信: 环境自检/启动打卡时会再次提示, 按提示安装即可"; exit 2 }
+exit 0

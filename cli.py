@@ -37,6 +37,7 @@ token(单活动会话消耗品)/consumed/refresh/策略。命令默认操作 act
   py -3 cli.py h5-session [--member X] / h5-login <学号> <密码>
   py -3 cli.py wechat-logout / wechat-status   # 强制退出微信登录(清登录态) / 状态
   py -3 cli.py license                  # 打印许可证要点/署名/声明指纹/构建戳
+  py -3 cli.py cert [--install]         # mitm 根证书体检/安装(异地首装必做; --machine 装本机库需管理员)
 
 注意: 业务调用需 mitm 在链上（config.environment.api_proxy=127.0.0.1:8081 且
 mitmweb 运行; 直连被业务门 101——节点局部会话）。run/capture/batch --cap 自动拉起。
@@ -578,6 +579,28 @@ def _bootstrap_if_empty():
         print(f"[init] 初始化失败: {e}")
 
 
+def cmd_cert(args):
+    """mitm 根证书: cert / cert --install [--machine]（HTTPS 抓取前置, 异地部署首装）。"""
+    from lepao import certctl
+    if "--install" in args:
+        r = certctl.install(user="--machine" not in args)
+        if r["ok"]:
+            print("[OK] mitm CA 已装入受信任根({}库) 指纹 {}".format(
+                r.get("store", "CurrentUser"), str(r.get("fingerprint", ""))[:12]))
+        else:
+            print("[FAIL] {} → {}".format(r.get("step"), r.get("detail")))
+        return 0 if r["ok"] else 1
+    st = certctl.status()
+    print("[cert]", certctl.summary_line(st))
+    if st["ca_present"]:
+        print("  CA 文件: {}".format(st["ca_file"]))
+        print("  指纹: {}  用户库={}  本机库={}".format(
+            st["fingerprint"][:16], st["trusted_user"], st["trusted_machine"]))
+    if not st["trusted"]:
+        print("  安装: py -3 cli.py cert --install   (当前用户库, 免管理员)")
+    return 0 if st["trusted"] else 1
+
+
 def cmd_license(_args):
     """打印许可证要点、署名块、声明文件指纹与构建戳（LRL-1.0 第二/三条）。"""
     from lepao import license_guard as lg
@@ -617,6 +640,7 @@ def main():
         "run": cmd_run, "batch": cmd_batch,
         "wechat-logout": cmd_wechat_logout, "wechat-status": cmd_wechat_status,
         "h5-session": cmd_h5_session, "h5-login": cmd_h5_login,
+        "cert": cmd_cert,
         "license": cmd_license,
     }
     if cmd not in table:
