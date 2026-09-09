@@ -214,6 +214,8 @@ def check_zip(path: Path) -> tuple:
             errors.append("发行包含 data/ 其他文件（真实数据永不入包）：" + n)
     miss = []
     for n in [x for x in names if x.endswith(".py")]:
+        if n.endswith("/_buildstamp.py"):
+            continue   # 生成物带精简声明（其存在即 LRL-1.0 第三条证据），不叠加规范块
         try:
             if MARKER_START.encode() not in zf.read(n):
                 miss.append(n)
