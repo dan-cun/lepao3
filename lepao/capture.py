@@ -243,6 +243,16 @@ def start(proxy_guard: ProxyGuard = None, force=False):
         pass
     guard.set_mitm()
     print(f"[capture] mitmweb 就绪 (upstream={upstream or '(直连模式)'}), console=: {WEB_PORT}")
+    # 起链后立刻自检根证书：未受信 = mitm 能起但小程序拒绝其签发证书 → 永远等不到号
+    try:
+        from . import certctl
+        print("[capture] " + certctl.summary_line())
+        _st = certctl.status()
+        if not _st["trusted"]:
+            print("[capture] 修复: py -3 cli.py cert --install  "
+                  "(或双击 %USERPROFILE%\\.mitmproxy\\mitmproxy-ca-cert.cer → 受信任的根证书颁发机构)")
+    except Exception:
+        pass
     return proc, guard
 
 
@@ -279,7 +289,10 @@ def wait(timeout_s=420, base_token=None, interval=2, stable_reads=6):
                       f"({time.time() - t0:.0f}s)")
                 return cred, True
         time.sleep(interval)
-    print("[capture] 超时: 未捕获新 token（确认系统代理已指 mitm 且微信已重登）")
+    print("[capture] 超时: 未捕获新 token —— 三查: ①系统代理已指 mitm(8081) ②微信已重新扫码登录"
+          "并打开小程序 ③**mitm 根证书受信**(不受信=TLS 被拒, 永远没有 loginByCode 流量; "
+          "自检: py -3 cli.py cert, 安装: py -3 cli.py cert --install)")
+
     try:
         return json.load(open(CRED, encoding="utf-8-sig")), False
     except Exception:

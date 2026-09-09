@@ -691,10 +691,22 @@ class App(tk.Tk):
         wx = c.get("wechat")
         wxdesc = "有 " + os.path.basename(wx) if wx else \
             "未找到(点「指定微信」或安装电脑版微信)"
+        ct = c.get("cert") or {}
+        if ct.get("trusted"):
+            ctdesc = "证书受信"
+        elif ct.get("present"):
+            ctdesc = "证书未受信!"
+        else:
+            ctdesc = "证书未生成"
         self.log("info", f"自检: mitmweb={'健康' if mw_ok else ('损坏' if c['mitmweb'] else '无')} | "
                          f"出口={updesc}{'(通)' if c['clash'] else ''} | "
+                         f"{ctdesc} | "
                          f"微信={wxdesc} | "
                          f"成员={c['members']}")
+        if not ct.get("trusted"):
+            self.log("warn", "  mitm 根证书不受信 → 小程序会拒绝 mitm, 永远抓不到登录流量!")
+            self.log("warn", "  修复(任选): 重跑 一键配置.ps1 / 命令行 py -3 cli.py cert --install / "
+                             "双击 %USERPROFILE%\\.mitmproxy\\mitmproxy-ca-cert.cer → 受信任的根证书颁发机构")
         if not wx:
             self.log("dim", "  微信路径自动探测: runner.json wechat → 常见安装目录 → 注册表"
                             " App Paths/卸载表 → 运行中进程 → 各盘 Tencent 目录 → 开始菜单快捷方式")
