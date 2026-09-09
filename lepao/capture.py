@@ -69,6 +69,8 @@ FLOWS = os.environ.get("LEPAO_FLOWS_DIR") or os.path.join(_ROOT_DIR, "flows")
 # -w 语义是"流文件"不是目录: 误传目录会让 mitm 启动即 Errno 13 崩
 if os.path.isdir(FLOWS):
     FLOWS = os.path.join(FLOWS, "flows.mitm")
+elif not FLOWS.lower().endswith(".mitm"):
+    FLOWS = FLOWS + ".mitm"          # 配置成无扩展名路径时纠正, 避免与同名目录冲突
 
 # 备选 config 位置（mitm addon 与 cli 可能从不同副本运行, 白名单取并集）
 _CFG_CANDIDATES = [LEPAO2_CONFIG,
@@ -202,6 +204,11 @@ def start(proxy_guard: ProxyGuard = None, force=False):
     err_path = os.path.join(os.path.dirname(FLOWS) if FLOWS else
                             os.path.dirname(LEPAO2_CONFIG),
                             "mitm_stderr.log")
+    # 异地部署防御: -w 的父目录若不存在 mitm 会 Errno 2 静默崩, 这里先建好
+    try:
+        os.makedirs(os.path.dirname(err_path) or ".", exist_ok=True)
+    except Exception:
+        pass
     try:
         errf = open(err_path, "a", encoding="utf-8", errors="replace")
         errf.write(f"\n==== start {time.strftime('%F %T')} ====\n")
