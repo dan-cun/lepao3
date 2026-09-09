@@ -85,12 +85,23 @@ if ($RegisterPath -and $mitm) {
     Say "OK" ("已写用户环境变量 LEPAO_MITM_EXE = " + $mitm + " (新开终端生效)")
 }
 
-# ---------------- 3) 依赖包(命令行模式: 加解密/br 解码) ----------------
-Say "3/8" "Python 依赖(pycryptodome / brotli) ..."
+# ---------------- 3) 依赖包 + 发行件完整性 ----------------
+Say "3/8" "Python 依赖(pycryptodome / brotli) 与发行件检查 ..."
 if ($pyOk) {
     py -3 -m pip install pycryptodome brotli | Out-Null
-    Say "OK" "pycryptodome + brotli 就绪"
+    # 真导入验证: pip 静默失败(离线/镜像不通)时提前暴露, 而不是打卡时才崩
+    $imp = py -3 -c "import Crypto, brotli; print('IMPORT_OK')" 2>&1 | Out-String
+    if ($imp -match "IMPORT_OK") { Say "OK" "pycryptodome + brotli 可导入" }
+    else { Say "失败" "依赖导入失败(多为 pip 未联网), 详见 pip 输出" }
 } else { Say "跳过" "无 Python(EXE 模式自带依赖)" }
+# 发行件完整性: 抓号插件与轨迹模板缺失 = 抓不到号/无轨迹可用
+foreach ($need in @((Join-Path $ScriptDir "工具\mitm_lptiyu_token.py"),
+                    (Join-Path $ScriptDir "config.sample.json"),
+                    (Join-Path $ScriptDir "data"),
+                    (Join-Path $ScriptDir "LICENSE"))) {
+    if (Test-Path $need) { Say "OK" ("发行件在位: " + (Split-Path -Leaf $need)) }
+    else { Say "缺失" ("发行件缺失: " + $need + " → 请用完整发布包解压到同一目录") }
+}
 
 # ---------------- 4) mitmproxy 根证书(HTTPS 抓取前置; 异地新机必装) ----------------
 Say "4/8" "检查/安装 mitmproxy 根证书(不装则小程序拒绝 mitm 签发的证书, 永远抓不到登录流量) ..."
@@ -203,8 +214,14 @@ if (Test-Path $cfg) {
 } else {
     Say "提示" "无 config.json → 首次运行程序会自动创建(或复制 config.sample.json)"
     if (Test-Path (Join-Path $ScriptDir "config.sample.json")) {
-        Copy-Item (Join-Path $ScriptDir "config.sample.json") $cfg -Force
-        Say "OK" "已从 config.sample.json 初始化"
+        # 复制后立即清空示例成员: sample 里的 STUDENT_NUM_x 是占位假成员,
+        # 留着会污染成员计数并在打卡时拿占位学号撞真门(cli 与 EXE 同此规则)
+        $j = Get-Content (Join-Path $ScriptDir "config.sample.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+        $j.accounts.PSObject.Properties | Where-Object { $_.Name -match '^STUDENT_NUM' } |
+            ForEach-Object { $j.accounts.PSObject.Properties.Remove($_.Name) }
+        if ($j.active -match '^STUDENT_NUM') { $j.active = "" }
+        $j | ConvertTo-Json -Depth 8 | Set-Content $cfg -Encoding UTF8
+        Say "OK" "已从 config.sample.json 初始化(成员表为空, 请打开程序登记真实成员)"
     }
 }
 

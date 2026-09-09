@@ -568,13 +568,26 @@ def cmd_h5_login(args):
 
 
 def _bootstrap_if_empty():
-    """config.json 缺失 → 若存在 config.sample.json 则以它初始化(含环境/策略骨架)。"""
+    """config.json 缺失 → 以 config.sample.json 的**环境/策略骨架**初始化。
+
+    刻意不复制 sample 里的示例成员（键=STUDENT_NUM_1 等占位符）：否则成员表被假成员
+    污染，`account list`/一键配置计数会误报"已登记 1 个"，且提交时拿占位学号撞真门。
+    真实成员必须由用户显式 `account add` 或 GUI『成员管理』登记。
+    """
     if os.path.exists(CFG_PATH) or not os.path.exists(os.path.join(BASE, "config.sample.json")):
         return
     try:
         import shutil
         shutil.copy(os.path.join(BASE, "config.sample.json"), CFG_PATH)
-        print(f"[init] 已从 config.sample.json 初始化 {CFG_PATH}")
+        skeleton = json.load(open(CFG_PATH, encoding="utf-8-sig"))
+        accounts = {k: v for k, v in (skeleton.get("accounts") or {}).items()
+                    if not k.upper().startswith("STUDENT_NUM")}
+        skeleton["accounts"] = accounts
+        if str(skeleton.get("active") or "").upper().startswith("STUDENT_NUM"):
+            skeleton["active"] = ""
+        with open(CFG_PATH, "w", encoding="utf-8") as f:
+            json.dump(skeleton, f, ensure_ascii=False, indent=1)
+        print(f"[init] 已从 config.sample.json 初始化 {CFG_PATH}（成员表置空，请 account add 登记）")
     except Exception as e:
         print(f"[init] 初始化失败: {e}")
 
