@@ -20,6 +20,7 @@
 import datetime
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -136,13 +137,253 @@ def _resolve_mitmweb() -> str:
 
 
 def _resolve_wechat() -> str:
+    """定位电脑版微信主程序（4.x Weixin / 3.x WeChat），多源解析(命中缓存)：
+      0) runner.json 显式 wechat 路径
+      1) 常见安装目录候选（Program Files / LOCALAPPDATA）
+      2) 注册表 HKLM/HKCU\...\App Paths\{Weixin,WeChat}.exe
+      3) 卸载表 DisplayName 反查（DisplayIcon / InstallLocation）
+      4) 运行中进程映像路径（纯 WinAPI, 覆盖非标准盘安装）
+      5) 各盘符 <盘>:\Tencent\... 与开始菜单快捷方式解析
+    全部落空返回 ""（UI 提供「指定微信程序」手动兜底）。"""
+    global _WX_CACHE
     c = _cfg_opt("wechat", "")
     if c and os.path.exists(c):
+        _WX_CACHE = c
         return c
+    if _WX_CACHE and os.path.exists(_WX_CACHE):
+        return _WX_CACHE
     for p in WECHAT_CANDIDATES + WECHAT_NEW_CANDIDATES:
         if p and os.path.exists(p):
+            _WX_CACHE = p
+            return p
+    p = _wechat_from_registry() or _wechat_from_process() or \
+        _wechat_from_drives() or _wechat_from_startmenu()
+    if p:
+        _WX_CACHE = p
+        _remember_wechat(p)
+    return p or ""
+
+
+_WX_CACHE = ""
+
+
+_WECHAT_EXES = ("Weixin.exe", "WeChat.exe")
+
+
+def _valid_wechat(p: str) -> str:
+    try:
+        p = os.path.normpath(p.strip().strip('"'))
+        if p and p.lower().endswith(("weixin.exe", "wechat.exe")) and os.path.isfile(p):
+            return p
+    except Exception:
+        pass
+    return ""
+
+
+def _wechat_from_registry() -> str:
+    try:
+        import winreg
+    except ImportError:
+        return ""
+    for exe in _WECHAT_EXES:
+        for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            try:
+                k = winreg.OpenKey(
+                    hive, "Software\\Microsoft\\Windows\\CurrentVersion"
+                          "\\App Paths\\" + exe)
+                v = _valid_wechat(winreg.QueryValue(k, None) or "")
+                if v:
+                    return v
+            except OSError:
+                continue
+    # 卸载表反查（显示名含 微信/WeChat/Weixin 的项）
+    for hive in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for sub in (r"Software\Microsoft\Windows\CurrentVersion\Uninstall",
+                    r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"):
+            try:
+                base = winreg.OpenKey(hive, sub)
+            except OSError:
+                continue
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(base, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    k = winreg.OpenKey(base, name)
+                    dn = str(winreg.QueryValueEx(k, "DisplayName")[0])
+                    if not any(x in dn for x in ("微信", "WeChat", "Weixin")):
+                        continue
+                    for field in ("DisplayIcon", "InstallLocation"):
+                        try:
+                            val = str(winreg.QueryValueEx(k, field)[0])
+                        except OSError:
+                            continue
+                        cand = val.split(",")[0] if field == "DisplayIcon" else \
+                            os.path.join(val, "Weixin.exe")
+                        v = _valid_wechat(cand) or _valid_wechat(
+                            os.path.join(val, "WeChat.exe"))
+                        if v:
+                            return v
+                except OSError:
+                    continue
+    return ""
+
+
+def _wechat_from_process() -> str:
+    """微信正在运行（本工具流程里很常见）→ 直接问系统拿进程映像路径。
+    纯 WinAPI（CreateToolshop32Snapshot + QueryFullProcessImageNameW），
+    不依赖 tasklist/wmic（Win11 已移除 wmic.exe）；再退 PowerShell 兜底。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE,
+                                                   wintypes.DWORD,
+                                                   wintypes.LPWSTR,
+                                                   ctypes.POINTER(wintypes.DWORD)]
+        k32.OpenProcess.restype = wintypes.HANDLE
+
+        class PROCENTRY(ctypes.Structure):
+            _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                        ("th32ProcessID", wintypes.DWORD),
+                        ("th32DefaultHeapID", ctypes.c_size_t),
+                        ("th32ModuleID", wintypes.DWORD),
+                        ("cntThreads", wintypes.DWORD),
+                        ("th32ParentProcessID", wintypes.DWORD),
+                        ("pcPriClassBase", ctypes.c_long),
+                        ("dwFlags", wintypes.DWORD),
+                        ("szExeFile", ctypes.c_char * 260)]
+
+        def exe_path(pid):
+            # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000（低权限也可查）
+            h = k32.OpenProcess(0x1000, False, pid)
+            if not h:
+                return ""
+            try:
+                size = wintypes.DWORD(1024)
+                buf = ctypes.create_unicode_buffer(1024)
+                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    return _valid_wechat(buf.value)
+            finally:
+                k32.CloseHandle(h)
+            return ""
+
+        snap = k32.CreateToolhelp32Snapshot(0x2, 0)     # TH32CS_SNAPPROCESS
+        if snap not in (None, -1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
+            entry = PROCENTRY()
+            entry.dwSize = ctypes.sizeof(PROCENTRY)
+            ok = k32.Process32First(snap, ctypes.byref(entry))
+            while ok:
+                raw = (entry.szExeFile if isinstance(entry.szExeFile, bytes)
+                       else bytes(entry.szExeFile)).split(b"\x00")[0]
+                nm = raw.decode("mbcs", errors="ignore").lower()
+                if nm in ("weixin.exe", "wechat.exe"):
+                    p = exe_path(entry.th32ProcessID)
+                    if p:
+                        k32.CloseHandle(snap)
+                        return p
+                ok = k32.Process32Next(snap, ctypes.byref(entry))
+            k32.CloseHandle(snap)
+    except Exception:
+        pass
+    # PowerShell 兜底（Get-Process 的 Path 属性；本工具已依赖 powershell）
+    try:
+        out = subprocess.run(
+            ["powershell", "-NoProfile", "-Command",
+             "Get-Process -Name Weixin,WeChat -ErrorAction SilentlyContinue | "
+             "Select-Object -First 1 -ExpandProperty Path"],
+            capture_output=True, text=True, timeout=25).stdout
+        for line in out.splitlines():
+            p = _valid_wechat(line)
+            if p:
+                return p
+    except Exception:
+        pass
+    return ""
+
+
+def _wechat_from_drives() -> str:
+    import string
+    for d in [x + ":\\" for x in string.ascii_uppercase
+              if os.path.isdir(x + ":\\")]:
+        if d.upper().startswith("C:\\"):
+            continue                      # C 盘候选层已查过
+        for pat in ("Tencent\\Weixin\\Weixin.exe",
+                    "Tencent\\WeChat\\WeChat.exe",
+                    "Program Files\\Tencent\\Weixin\\Weixin.exe",
+                    "微信\\Weixin.exe", "Weixin\\Weixin.exe"):
+            p = _valid_wechat(os.path.join(d, pat))
+            if p:
+                return p
+    return ""
+
+
+def _wechat_from_startmenu() -> str:
+    """开始菜单/公共桌面快捷方式 → 解析 .lnk 目标（无需第三方库：
+    .lnk 内 target 路径可 ASCII 粗提取，失败则回退 weixin:// 协议探测）。"""
+    dirs = []
+    for env in ("APPDATA", "PROGRAMDATA"):
+        base = os.path.expandvars("%{}%".format(env))
+        if base:
+            dirs += [os.path.join(base, r"Microsoft\Windows\Start Menu\Programs"),
+                     os.path.join(base, "Desktop")]
+    dirs = [d for d in dirs if os.path.isdir(d)]
+    for d in dirs:
+        try:
+            for root, _, fs in os.walk(d):
+                for f in fs:
+                    if not f.lower().endswith(".lnk"):
+                        continue
+                    if not any(x in f for x in ("微信", "WeChat", "Weixin")):
+                        continue
+                    p = _lnk_target(os.path.join(root, f))
+                    if p:
+                        return p
+        except Exception:
+            continue
+    return ""
+
+
+def _lnk_target(path: str) -> str:
+    """从 .lnk 二进制里粗提取 WeChat/Weixin 主程序路径（ANSI 与 UTF-16 两种编码都试），
+    不做完整 MS-SHLLINK 解析——目标只有一个 exe，扫出来即可。失败返回 ""。"""
+    try:
+        raw = open(path, "rb").read()
+    except Exception:
+        return ""
+    cands = []
+    for m in re.finditer(rb"[A-Za-z]:[\\/][\x20-\x7e]{3,254}?\.(?:exe|EXE)", raw):
+        cands.append(m.group(0).decode("mbcs", errors="ignore"))
+    u = raw.decode("utf-16-le", errors="ignore")
+    for m in re.finditer(r"[A-Za-z]:[\\/][^\x00]{3,254}?\.exe", u):
+        cands.append(m.group(0))
+    for c in cands:
+        p = _valid_wechat(c)
+        if p:
             return p
     return ""
+
+
+def _remember_wechat(p: str) -> None:
+    """把自动发现的微信路径回写 runner.json(下次免全盘找, 也便于用户看见改错)。"""
+    try:
+        fp = os.path.join(DATA_DIR, "runner.json")
+        j = {}
+        if os.path.exists(fp):
+            with open(fp, encoding="utf-8-sig") as f:
+                j = json.load(f)
+        if j.get("wechat") != p:
+            j["wechat"] = p
+            with open(fp, "w", encoding="utf-8") as f:
+                json.dump(j, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
 
 
 def _cfg_opt(key, default=""):
@@ -318,6 +559,13 @@ def open_wechat() -> str:
             return p
         except Exception:
             pass
+    # 兜底：走 weixin:// / wechat:// 协议启动（注册过协议但未落在可探路径时仍可唤起）
+    for proto in ("weixin://", "wechat:"):
+        try:
+            os.startfile(proto)
+            return proto
+        except Exception:
+            continue
     return ""
 
 

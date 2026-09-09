@@ -451,6 +451,10 @@ class App(tk.Tk):
                   font=F_UI_B, bg=CARD, fg=DIM, relief="flat", bd=0,
                   cursor="hand2", pady=6).pack(fill="x", padx=12, pady=4)
 
+        tk.Button(right, text="指定微信程序(路径找不到时)", command=self._pick_wechat,
+                  font=F_UI_S, bg=CARD, fg=DIM, relief="flat", bd=0,
+                  cursor="hand2", pady=3).pack(fill="x", padx=12, pady=(0, 4))
+
         # 强制退出微信登录(新逻辑: 打卡前先清干净旧登录态, 杜绝顶号)
         self.var_logout = tk.BooleanVar(value=RC.LOGOUT_ON_RUN)
         tk.Checkbutton(right, text="启动前强制退出微信登录\n(杀进程+清登录态, 需重新扫码)",
@@ -684,10 +688,16 @@ class App(tk.Tk):
             self.dot_clash.config(fg=WARN, text="○")
             self.lbl_clash.config(text="出口-代理不通(将直连)", fg=WARN)
         updesc = (c.get("upstream") or "直连(自动识别)")
+        wx = c.get("wechat")
+        wxdesc = "有 " + os.path.basename(wx) if wx else \
+            "未找到(点「指定微信」或安装电脑版微信)"
         self.log("info", f"自检: mitmweb={'健康' if mw_ok else ('损坏' if c['mitmweb'] else '无')} | "
                          f"出口={updesc}{'(通)' if c['clash'] else ''} | "
-                         f"微信={'有' if c['wechat'] else '未找到'} | "
+                         f"微信={wxdesc} | "
                          f"成员={c['members']}")
+        if not wx:
+            self.log("dim", "  微信路径自动探测: runner.json wechat → 常见安装目录 → 注册表"
+                            " App Paths/卸载表 → 运行中进程 → 各盘 Tencent 目录 → 开始菜单快捷方式")
 
     def _set_step(self, text):
         self.log("step", text)
@@ -697,6 +707,25 @@ class App(tk.Tk):
             os.startfile(RC.DATA_DIR)
         except Exception:
             pass
+
+    def _pick_wechat(self):
+        """手动指定微信主程序 → 写入 runner.json wechat（自动探测六层都失败时的兜底）。"""
+        try:
+            from tkinter import filedialog
+        except Exception:
+            return
+        p = filedialog.askopenfilename(
+            parent=self, title="选择微信主程序 (Weixin.exe 或 WeChat.exe)",
+            filetypes=[("微信", "Weixin.exe WeChat.exe weixin.exe wechat.exe"),
+                       ("所有文件", "*.exe")])
+        if not p:
+            return
+        try:
+            RC._remember_wechat(p)
+        except Exception:
+            pass
+        self.log("ok", f"已记录微信路径 → {p}")
+        self._refresh_cap()
 
     def _banner_loop(self):
         if self.phase == PHASE_CAP and self.worker and self.worker.is_alive():

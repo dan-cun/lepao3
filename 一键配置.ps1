@@ -102,12 +102,56 @@ else { Say "提示" "Clash 未监听 → 程序自动【直连模式】(登录�
 # ---------------- 5) 微信(打卡操作必需) ----------------
 Say "5/7" "检查电脑版微信 ..."
 $wx = ""
+# 层1: 常见安装目录
 foreach ($p in @("$env:ProgramFiles\Tencent\Weixin\Weixin.exe", "${env:ProgramFiles(x86)}\Tencent\Weixin\Weixin.exe", "$env:LOCALAPPDATA\Tencent\Weixin\Weixin.exe", "${env:ProgramFiles(x86)}\Tencent\WeChat\WeChat.exe", "$env:ProgramFiles\Tencent\WeChat\WeChat.exe")) {
     if ($p -and (Test-Path $p)) { $wx = $p; break }
 }
-if ($wx) { Say "OK" ("微信已安装: $wx") }
+# 层2: 注册表 App Paths(微信安装器通常会写)
+if (-not $wx) {
+    foreach ($exe in @("Weixin.exe", "WeChat.exe")) {
+        foreach ($root in @("HKLM:\", "HKCU:\")) {
+            $ap = "$root\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\$exe"
+            if (Test-Path $ap) {
+                $v = (Get-ItemProperty -Path $ap -ErrorAction SilentlyContinue).'(default)'
+                if ($v -and (Test-Path $v)) { $wx = $v; break }
+            }
+        }
+        if ($wx) { break }
+    }
+}
+# 层3: 卸载表反查(DisplayName 含 微信/WeChat/Weixin)
+if (-not $wx) {
+    $un = @("HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+            "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*")
+    foreach ($k in (Get-ItemProperty -Path $un -ErrorAction SilentlyContinue)) {
+        if ($k.DisplayName -match '微信|WeChat|Weixin') {
+            $icon = ($k.DisplayIcon -split ',')[0].Trim('"')
+            if ($icon -match '(?i)weixin\.exe$|wechat\.exe$' -and (Test-Path $icon)) { $wx = $icon; break }
+            if ($k.InstallLocation -and (Test-Path (Join-Path $k.InstallLocation "Weixin.exe"))) { $wx = Join-Path $k.InstallLocation "Weixin.exe"; break }
+            if ($k.InstallLocation -and (Test-Path (Join-Path $k.InstallLocation "WeChat.exe"))) { $wx = Join-Path $k.InstallLocation "WeChat.exe"; break }
+        }
+    }
+}
+# 层4: 正在运行的微信进程路径
+if (-not $wx) {
+    $proc = Get-Process -Name Weixin, WeChat -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
+    if ($proc) { $wx = $proc.Path }
+}
+# 层5: 非 C 盘的 Tencent 目录浅扫
+if (-not $wx) {
+    foreach ($d in (Get-PSDrive -PSProvider FileSystem | Where-Object { $_.Name -ne 'C' })) {
+        foreach ($pat in @("Tencent\Weixin\Weixin.exe", "Tencent\WeChat\WeChat.exe", "Program Files\Tencent\Weixin\Weixin.exe")) {
+            $p = Join-Path $d.Root $pat
+            if (Test-Path $p) { $wx = $p; break }
+        }
+        if ($wx) { break }
+    }
+}
+if ($wx) { Say "OK" ("微信已安装: $wx"); $rj = Join-Path $ScriptDir "runner.json"; $memo = @{ wechat = $wx } | ConvertTo-Json; [System.IO.File]::WriteAllText($rj, $memo, (New-Object System.Text.UTF8Encoding($false))) }
 else {
     Say "缺失" "未找到电脑版微信(4.x Weixin / 3.x WeChat) → 打卡需要它登录小程序"
+    Say "提示" "若微信装在非常规位置: 双击启动助手后用右侧『指定微信程序』按钮手动选择, 会记入 runner.json"
     if ($InstallWechat) {
         Say "安装" "winget 安装微信 ..."; winget install -e --id Tencent.WeChat --accept-package-agreements --accept-source-agreements
     }
