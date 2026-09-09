@@ -243,14 +243,46 @@ def check_zip(path: Path) -> tuple:
 
 
 def check_exe(path: Path) -> tuple:
+    """核对 EXE 是否由当前源码构建。
+
+    onefile 的 .py 都编译进压缩 CArchive，明文搜不到 → 唯一可靠判据是**跑一次
+    --selfcheck**（只读：建临时运行目录、探测依赖、写 selfcheck.json；不动代理、
+    不杀微信、不发业务请求），比对其中的 license.build_id 与当前 _buildstamp.py。
+    """
     errors, warns = [], []
-    data = path.read_bytes()
     stamp_txt = _text_of(ROOT / "lepao" / "_buildstamp.py")
     m = re.search(r'BUILD_ID = "([^"]+)"', stamp_txt)
     bid = m.group(1) if m else ""
-    if bid and bid.encode() not in data:
-        warns.append("EXE 内未找到当前构建戳 {}（可能是旧构建，重新打包后再验）".format(bid))
+    if not bid:
+        return [], ["缺 lepao/_buildstamp.py（未跑 apply_headers.py --stamp），无法核对 EXE 构建戳"]
+    data = path.read_bytes()
+    if bid.encode() in data:                       # 未压缩场景直接命中
+        return errors, ["EXE 含当前构建戳 {}".format(bid)]
+    import subprocess, tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="lepao_verify_"))
+    try:
+        import os
+        env = dict(os.environ, LEPAO_RUNNER_DIR=str(tmp))
+        subprocess.run([str(path), "--selfcheck"], cwd=str(tmp), timeout=120,
+                       capture_output=True, env=env)
+        rep = tmp / "selfcheck.json"
+        if not rep.exists():
+            return errors, ["EXE --selfcheck 未产出 selfcheck.json，无法核对构建戳（手工验证）"]
+        got = (json.loads(rep.read_text(encoding="utf-8-sig"))
+               .get("license") or {}).get("build_id", "")
+        if got == bid:
+            warns.append("EXE 构建戳一致：{}（--selfcheck 实测）".format(bid))
+        elif got:
+            errors.append("EXE 为旧构建：内嵌 {}，当前源码 {} → 需重新 build_runner.ps1".format(got, bid))
+        else:
+            errors.append("EXE 自检无 license.build_id（早于声明体系构建）→ 需重新打包")
+    except Exception as e:
+        warns.append("EXE --selfcheck 无法执行（{}），退化为字节搜索：未命中 {}".format(e, bid))
+    finally:
+        import shutil
+        shutil.rmtree(str(tmp), ignore_errors=True)   # 内含 runtime 子目录, 必须递归清
     return errors, warns
+
 
 
 def check_network() -> tuple:
