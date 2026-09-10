@@ -88,6 +88,27 @@ def tree_files() -> list:
     return out
 
 
+def shippable_files() -> list:
+    """发行可见集 = git 已跟踪 + 未跟踪但**未被 ignore** 的文件。
+
+    门禁扫描必须与发布面一致：运行期数据(config.json/凭证.json/selfcheck.json 等)
+    虽在工作树里含真实凭证, 但被 .gitignore 拦截、永不入库入包 —— 对其报 PII 阻断
+    属于误报(它们是本机运行所需, 删了反而伤人)。zip/exe 通道本就只查包内文件。
+    git 不可用时退回全树扫描(宁可误报不可漏报)。"""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "ls-files", "--cached", "--others",
+                            "--exclude-standard"], cwd=ROOT, capture_output=True,
+                           text=True, encoding="utf-8", errors="replace")
+        rels = {l.strip().replace("\\", "/") for l in r.stdout.splitlines() if l.strip()}
+    except Exception:
+        return tree_files()
+    if r.returncode != 0 or not rels:
+        return tree_files()
+    return [p for p in tree_files()
+            if str(p.relative_to(ROOT)).replace("\\", "/") in rels]
+
+
 def check_notices(meta: dict) -> tuple:
     """声明文件存在性 + README 前 30 行引用义务 + 源文件版权块覆盖率。"""
     errors, warns = [], []
@@ -191,7 +212,10 @@ def check_forbidden(files: list) -> tuple:
                 warns.append("工作树含运行态文件：{}（gitignored 不入库；"
                              "zip 分发按 git 清单打包即可，勿手动附带）".format(rel))
     cfg = ROOT / "config.json"
-    if cfg.exists():
+    if cfg.exists() and str(cfg.relative_to(ROOT)).replace("\\", "/") in \
+            {str(p.relative_to(ROOT)).replace("\\", "/") for p in files}:
+        # 仅当 config.json 属于"发行可见集"(已跟踪, 或未跟踪但未被 ignore)才拦骨架;
+        # 被 .gitignore 拦截的本机运行配置不入库不入包, 由运行态 warn 提示即可。
         ok, why = _config_skeleton_ok(cfg)
         if not ok:
             errs.append("config.json 非空骨架，不得入库/入包：" + why)
@@ -385,8 +409,9 @@ def main(argv=None) -> int:
         e, w = check_network()
     else:
         e, w = check_notices(meta)
-        e2, w2 = check_pii(tree_files())
-        e3, w3 = check_forbidden(tree_files())
+        ship = shippable_files()
+        e2, w2 = check_pii(ship)
+        e3, w3 = check_forbidden(ship)
         e, w = e + e2 + e3, w + w2 + w3
     errors += e
     warns += w

@@ -422,7 +422,7 @@ def cmd_run(args):
               f"「数体智慧体育」小程序到跑步首页(勿重复打开)")
         guard = CAP.ProxyGuard()
         proc, guard = CAP.start(guard)          # 链全程保持: 抓取与业务共用同一 mitm
-        cred, changed = CAP.wait(wait_timeout=600)
+        cred, changed = CAP.wait(timeout_s=600)
         if not changed:
             print(f"[run:{label}] capture 失败/超时 → 终止 (链已复原)")
             _stop_mitm_chain(guard)
