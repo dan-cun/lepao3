@@ -736,6 +736,18 @@ def _flog(level, text):
         pass
 
 
+def _pipe_log(log):
+    """把 run_core 的 (level,text) 日志回调适配为 Pipeline 的单参 log_fn。"""
+    def _pl(msg):
+        try:
+            lvl = "err" if ("[FATAL]" in msg or "Traceback" in msg) else \
+                  ("warn" if ("[WARN]" in msg or "失败" in msg) else "info")
+            log(lvl, str(msg))
+        except Exception:
+            pass
+    return _pl
+
+
 def _logged(log):
     """把任意 log 回调包装为 落盘 + 回调 双写(幂等: 已包装不再包)。"""
     if log is None:
@@ -966,14 +978,21 @@ def _submit_run(member_key, log, stop_event):
     try:
         pol = reg.merged_policy(member_key)
         pipe = Pipeline(auth, LocalState(STATE_PATH), policy=pol,
-                        stop_event=stop_event)
+                        stop_event=stop_event, log_fn=_pipe_log(log))
         out, code = pipe.run(submit=True)
         if code == 9:
             log("warn", "提交被中断(顶号/用户停止) → 本次未提交。重新点『启动程序』即可")
             return "被顶号"
         if code == 0 and out and out.get("record_id"):
-            watch_record(out["record_id"], stop_event, log)
-            return "成功"
+            ok = watch_record(out["record_id"], stop_event, log)
+            if ok is True:
+                return "成功"
+            if ok is False:
+                return "已提交但判无效"
+            # 复核未终判: 只有拿到"记录已受理"才提示成功, 并明确告知复核途径
+            log("warn", "记录已提交(record_id={})但服务端尚未终判 → "
+                        "打开小程序『我的跑步』稍后查看是否出现该记录".format(out["record_id"]))
+            return "已提交待复核"
         if code == 5:
             log("warn", "已受理但判无效, 今日可再试一次")
             return "判无效"
@@ -1001,7 +1020,7 @@ def action_dry(member=None, log=print, stop_event=None):
         guard, _proc = start_chain(log)
         pol = reg.merged_policy(auth.key)
         pipe = Pipeline(auth, LocalState(STATE_PATH), policy=pol,
-                        stop_event=stop_event)
+                        stop_event=stop_event, log_fn=_pipe_log(log))
         _out, code = pipe.run(submit=False)
         log("info", f"干跑结束 退出码={code} (0=该成员在链上全流程可跑)")
         return "成功" if code == 0 else f"退出码{code}"

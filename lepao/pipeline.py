@@ -31,7 +31,8 @@ from .v3api import V3Error
 
 
 class Pipeline:
-    def __init__(self, auth, state, policy=None, verbose=True, stop_event=None):
+    def __init__(self, auth, state, policy=None, verbose=True, stop_event=None,
+                 log_fn=None):
         self.auth = auth
         self.state = state
         self.cfg = auth.config
@@ -40,6 +41,10 @@ class Pipeline:
                             "dist_lo": 2.03, "dist_hi": 2.35},
                            **(policy or {}))
         self.v = verbose
+        # 日志出口: 默认 print(命令行); UI/EXE 必须传 log_fn, 否则 windowed
+        # 模式下提交链每一步(含 FATAL)全部进 print 黑洞 —— "程序显示成功、
+        # 小程序没记录"却查不到原因的根因之一。
+        self.log_fn = log_fn or print
         self.rnd = random.Random()
         self.stop_event = stop_event  # 可中断: UI 停止按钮 / 顶号看门狗
 
@@ -62,7 +67,10 @@ class Pipeline:
 
     def log(self, msg):
         if self.v:
-            print(f"[{self._member_tag()}] {msg}")
+            try:
+                self.log_fn(f"[{self._member_tag()}] {msg}")
+            except Exception:
+                print(f"[{self._member_tag()}] {msg}")
 
     # ------------------------------------------------------------ 步骤
     def _config(self, client):

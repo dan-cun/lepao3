@@ -18,9 +18,35 @@ import json
 import math
 import os
 import random
+import sys
 
-TEMPLATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "data", "真实轨迹_035明文.json")
+
+def _find_template():
+    """轨迹模板定位：源码 / PyInstaller onefile(含旧版目录套娃包) / exe 同目录，逐一探测。
+    旧打包脚本把 --add-data 目标写成 data\\<文件名>，导致解包后成为
+    data/<文件名>/<文件名> 的目录套娃 → 模板打开失败 → 提交链在 [4] 静默中断。"""
+    name = "真实轨迹_035明文.json"
+    cands = []
+    if getattr(sys, "frozen", False):
+        base = getattr(sys, "_MEIPASS", "") or ""
+        exedir = os.path.dirname(os.path.abspath(sys.executable))
+        for b in (base, exedir):
+            if not b:
+                continue
+            cands += [os.path.join(b, "data", name),           # 正确打包
+                      os.path.join(b, "data", name, name),     # 旧套娃包兼容
+                      os.path.join(b, name)]
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+    cands += [os.path.join(root, "data", name), os.path.join(here, "data", name)]
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return cands[-1]  # 全落空: 保留源码路径, 报错信息有意义
+
+
+TEMPLATE_FILE = _find_template()
+
 
 DT = 2.833  # 真机采样步长(s) ±0.02 抖动
 

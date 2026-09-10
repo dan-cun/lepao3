@@ -29,7 +29,7 @@ foreach ($a in $assets) { if (-not (Test-Path $a)) { throw ("missing license ass
 Write-Host "[3/4] PyInstaller onefile (1-3 min) ..."
 $datas = @(
   ($sample + ";."),
-  ($template.FullName + ";data\" + $template.Name),
+  ($template.FullName + ";data"),
   ($bAddon + ";.")
 )
 foreach ($a in $assets) { $datas += ($a + ";.") }

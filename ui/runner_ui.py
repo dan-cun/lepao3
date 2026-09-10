@@ -514,8 +514,20 @@ class App(tk.Tk):
         self.worker = None
         self.phase = PHASE_IDLE
         self._set_running(False)
-        self.banner.config(text="完成 — 点击「▶ 启动程序」可开始下一位成员",
-                           fg=OK)
+        out = getattr(self, "_last_out", None)
+        if out == "成功":
+            self.banner.config(text="✔ 打卡成功(服务端已判有效) — 小程序稍后可见", fg=OK)
+        elif out == "已提交待复核":
+            self.banner.config(text="● 记录已提交, 服务端待终判 — 打开小程序『我的跑步』查看",
+                               fg=STEP)
+        elif out is None or out in ("已取消", "被顶号", "超时未抓号", "需抓号",
+                                    "未登记", "缺依赖", "失败", "判无效"):
+            self.banner.config(text=(f"■ 未成功: {out or '已停止'} — 详见日志"
+                                     if out else "已停止 — 详见日志"), fg=ERR)
+        else:
+            self.banner.config(text=(f"● 结束({out}) — 详见日志" if out
+                                     else "完成 — 点击「▶ 启动程序」可开始下一位成员"),
+                               fg=WARN if out else OK)
         self.refresh_members()
 
     def _run_job(self, fn, *args):
@@ -526,15 +538,18 @@ class App(tk.Tk):
         self.con.delete("1.0", "end")
         self._set_running(True)
         self.banner.config(text="运行中…", fg=STEP)
+        self._last_out = None
 
         def job():
             try:
                 out = fn(*args, log=self.logger, stop_event=self.stop_ev)
+                self._last_out = "已取消" if (self.stop_ev and self.stop_ev.is_set()) else out
                 if self.stop_ev and self.stop_ev.is_set():
                     self.log_q.put(("warn", "任务被用户停止"))
                 else:
                     self.log_q.put(("ok", f"任务结束: {out}"))
             except Exception as e:
+                self._last_out = "异常"
                 self.log_q.put(("err", f"任务异常: {e}"))
             finally:
                 self.log_q.put(("dim", "-" * 60))
